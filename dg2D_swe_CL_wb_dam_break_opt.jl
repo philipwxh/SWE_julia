@@ -15,17 +15,17 @@ include("plot_Makie.jl")
 g = 1.0
 "Approximation parameters"
 N   = 3 # The order of approximation
-K1D = 8
+K1D = 32
 CFL = 1/4
-T   = 1 # endtime
-MAXIT = 100#0000
+T   = 0.1 # endtime
+MAXIT = 1000000
 @show K1D, MAXIT
 ts_ft= 1/2
 tol = 1e-2
 t_plot = LinRange(0, 1,21);
 plot_all = false
+plot_last = false
 # t_plot = [T];
-plot_last = false;
 qnode_choice = "GQ" #"GQ" "GL" "tri_diage"
 
 # Mesh related variables
@@ -35,16 +35,8 @@ VXY[1] .= VXY[1]*1.5.+0.5
 md = MeshData(VXY, EToV, rd)
 
 # # Construct matrices on reference elements
-# # rd = init_reference_tri_sbp_GQ(N, qnode_choice)
 @unpack r,s,rf,sf,wf,rq,sq,wq,nrJ,nsJ = rd
 @unpack VDM,V1,Vq,Vf,Dr,Ds,M,Pq,LIFT = rd
-
-# V = vandermonde_2D(N, r, s)
-# Vr, Vs = grad_vandermonde_2D(N, r, s)
-# M = inv(V*V')
-# Dr_ES = Vr/V; Ds = Vs/V;
-# M = Vq'*diagm(wq)*Vq
-
 Qr_ES = M*Dr;
 Qs_ES = M*Ds;
 Pq = M\(Vq'*diagm(wq));
@@ -96,21 +88,9 @@ for i=1:size(xf,1)
     end
 end
 
-# # "Make periodic"
-# # LX,LY = (x->maximum(x)-minimum(x)).((VX,VY)) # find lengths of domain
-# # mapPB = build_periodic_boundary_maps(xf,yf,LX,LY,Nfaces*K,mapM,mapP,mapB)
-# # mapP[mapB] = mapPB
-
 # # "Geometric factors and surface normals"
 @unpack rxJ, sxJ, ryJ, syJ, J, sJ, nxJ, nyJ = md
-# rxJ, sxJ, ryJ, syJ, J = geometric_factors(x, y, Dr, Ds)
-# rxJ = Matrix(droptol!(sparse(rxJ),1e-14)); sxJ = Matrix(droptol!(sparse(sxJ),1e-14))
-# ryJ = Matrix(droptol!(sparse(ryJ),1e-14)); syJ = Matrix(droptol!(sparse(syJ),1e-14))
-# nxJ = (Vf*rxJ).*nrJ + (Vf*sxJ).*nsJ;
-# nyJ = (Vf*ryJ).*nrJ + (Vf*syJ).*nsJ;
-# sJ = @. sqrt(nxJ^2 + nyJ^2)
 nx = nxJ./sJ; ny = nyJ./sJ;
-# rxJ,sxJ,ryJ,syJ,J = (x->Vq*x).((rxJ,sxJ,ryJ,syJ,J))
 
 
 QNr = [Qr_ES - .5*E_ES'*Br*E_ES .5*E_ES'*Br;
@@ -118,12 +98,9 @@ QNr = [Qr_ES - .5*E_ES'*Br*E_ES .5*E_ES'*Br;
 QNs = [Qs_ES - .5*E_ES'*Bs*E_ES .5*E_ES'*Bs;
     -.5*Bs*E_ES .5*Bs];
 
-# VN_sbp = [eye(length(wq));E];
 VN_sbp = [Matrix{Float64}(I, length(wq), length(wq)); E]
 QNr_sbp = VN_sbp'*QNr*VN_sbp;
-# # @show norm(QNr_sbp+QNr_sbp' - E'*diagm(wf.*nrJ)*E)
 QNs_sbp = VN_sbp'*QNs*VN_sbp;
-# # @show norm(QNs_sbp+QNs_sbp' - E'*diagm(wf.*nsJ)*E)
 
 Qrskew_ES = .5*(QNr_sbp-QNr_sbp');
 Qsskew_ES = .5*(QNs_sbp-QNs_sbp');
@@ -147,6 +124,7 @@ dT = CFL * 2 / (CN*K1D)
 Nsteps = convert(Int,ceil(T/dT))
 dt = T/Nsteps
 
+
 # "initial conditions"
 xq = Vq*x
 yq = Vq*y
@@ -164,36 +142,6 @@ h0 = copy(h)
 
 hu = h*0.0;
 hv = h*0.0;
-# # u = (h, hu, hv)
-# rp, sp = equi_nodes(20)
-# Vp = vandermonde(N,rp,sp)/vandermonde(N,r,s)
-# fig1 = Makie.Figure();
-# ax1 = Makie.Axis(fig1[1, 1],
-#                 aspect = DataAspect(),
-#                 show_axis=false, resolution = (2500,2500));
-# ax2 = Makie.Axis3(fig2[1,1], aspect = (1, 1, 1),
-#                 elevation = .25*pi, azimuth = -.25*pi,
-#                 show_axis=false, resolution = (2500, 2500));
-# plot_data = Vp*Pq*(h)
-#
-# plt1 = Makie.mesh!(ax1, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y), set_z_coordinate_to_zero=true),
-#            color=vec(plot_data),
-#            # shading = false,
-#            colormap =:blues,
-#            # colormap =:viridis,
-#            );
-# # plt = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
-# #         color=vec(plot_data), shading = false, colormap = :blues);
-# #
-# # ax = [ax1, ax2]
-# Makie.hidespines!(ax1)
-# Makie.hidedecorations!(ax1)
-# # save("h1.0_mf_90.png", fig, px_per_unit = 2)
-# Makie.tightlimits!(ax1)
-# Makie.Colorbar(fig1[1,2], plt1)
-# # trim!(fig.layout);
-# rowsize!(fig1.layout, 1, ax1.scene.px_area[].widths[2]);
-# fig1
 
 "pack arguments into tuples"
 Fmask = [findfirst(@. abs(rf[i] - rq) + abs(sf[i] - sq) < 100*eps()) for i in eachindex(rf)]
@@ -407,13 +355,12 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
 
     #volume part
     # loop over all elements
-    @batch for e = 1:size(h,2)
+    @batch for e = 1:nelem
         rxJ_i = rxJ[1,e]; sxJ_i = sxJ[1,e];
         ryJ_i = ryJ[1,e]; syJ_i = syJ[1,e];
         vgeo_e = (rxJ_i, sxJ_i, ryJ_i, syJ_i);
         b_e = btm[:,e];
         h_e_min = minimum(h_H_next[:,e]);
-        l_e = 1.0;
         for i=1:Nq
             UL_E = (h[i,e], hu[i,e], hv[i,e]);
             for j=i:Nq
@@ -477,64 +424,15 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
                     #     error("limiting in force")
                     # end
                 else
-                    l = 1.0;
+                    l = 1;
                 end
-                l_e = min(l,l_e)
-                # l_e = 0
-                if l_e < tol
-                    l_e = 0.0;
-                    break
-                end
-            end
-            if l_e < tol
-                l_e = 0.0;
-                break
-            end
-        end
-        for i=1:Nq
-            UL_E = (h[i,e], hu[i,e], hv[i,e]);
-            for j=i:Nq
-                UR_E = (h[j,e], hu[j,e], hv[j,e])
-                fv1_i_ES, fv2_i_ES, fv3_i_ES, fv1_j_ES, fv2_j_ES, fv3_j_ES = swe_2d_esdg_vol(UL_E, UR_E, ops, vgeo_e, i, j, b_e, g)
-
-                cij = C[i,j]
-                fv1_i_ID = 0.0; fv2_i_ID = 0.0; fv3_i_ID = 0.0;
-                fv1_j_ID = 0.0; fv2_j_ID = 0.0; fv3_j_ID = 0.0;
-                if C[i,j]!=0 || i == j
-                    fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, ops, vgeo_e, i, j, btm, g);
-                    fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, ops, vgeo_e, j, i, btm, g);
-
-                    # fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, Qr_ID, Qs_ID, vgeo_e, i, j);
-                    # fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, Qr_ID, Qs_ID, vgeo_e, j, i);
-                    lambda_i = abs(u[i,e]*C_x[i,j]+v[i,e]*C_y[i,j])+sqrt(g*h[i,e])
-                    lambda_j = abs(u[j,e]*C_x[j,i]+v[j,e]*C_y[j,i])+sqrt(g*h[j,e])
-                    lambda = max(lambda_i, lambda_j)
-                    # d1 = 0; d2 = 0; d3 = 0
-                    # if h[i,e]>tol &&  h[i,e]>tol
-                    # d1 = cij * lambda * (h[j,e] + b_e[j]  - h[i,e] - b_e[i]);
-                    d1 = cij * lambda * (h[j,e] - h[i,e]);
-                    # if h[i,e]<=tol ||  h[j,e]<=tol
-                    #     d1 = 0;
-                    # end
-                    # d1 = 0;
-                    d2 = cij * lambda * (hu[j,e] - hu[i,e]);
-                    d3 = cij * lambda * (hv[j,e] - hv[i,e]);
-                    # end
-                    fv1_i_ID -= d1
-                    fv2_i_ID -= d2
-                    fv3_i_ID -= d3
-                    fv1_j_ID += d1
-                    fv2_j_ID += d2
-                    fv3_j_ID += d3
-                end
-
-                rhs1_CL[i,e] += fv1_i_ID + l_e * (fv1_i_ES-fv1_i_ID);
-                rhs2_CL[i,e] += fv2_i_ID + l_e * (fv2_i_ES-fv2_i_ID);
-                rhs3_CL[i,e] += fv3_i_ID + l_e * (fv3_i_ES-fv3_i_ID);
+                rhs1_CL[i,e] += fv1_i_ID + l * (fv1_i_ES-fv1_i_ID);
+                rhs2_CL[i,e] += fv2_i_ID + l * (fv2_i_ES-fv2_i_ID);
+                rhs3_CL[i,e] += fv3_i_ID + l * (fv3_i_ES-fv3_i_ID);
                 if i!= j
-                    rhs1_CL[j,e] += fv1_j_ID + l_e * (fv1_j_ES-fv1_j_ID);
-                    rhs2_CL[j,e] += fv2_j_ID + l_e * (fv2_j_ES-fv2_j_ID);
-                    rhs3_CL[j,e] += fv3_j_ID + l_e * (fv3_j_ES-fv3_j_ID);
+                    rhs1_CL[j,e] += fv1_j_ID + l * (fv1_j_ES-fv1_j_ID);
+                    rhs2_CL[j,e] += fv2_j_ID + l * (fv2_j_ES-fv2_j_ID);
+                    rhs3_CL[j,e] += fv3_j_ID + l * (fv3_j_ES-fv3_j_ID);
                 end
             end
         end
@@ -561,6 +459,7 @@ for i = 1:MAXIT
     if i%1000 == 0
         @show i, t
     end
+    # @show i
     global h, hu, hv, U, t, t_plot, pl_idx, dt, dt1, dt2, lambda, filename
     global U,t, t_plot, pl_idx, dt, filename, htmp, hutmp, hvtmp, rhs_1, rhs_2
     # Heun's method - this is an example of a 2nd order SSP RK method
@@ -570,6 +469,7 @@ for i = 1:MAXIT
     @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
     lambda = maximum(u)
     dt1 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J[1]/(ts_ft*lambda), dT);
+    # dt1 = dT
     rhs_1 = swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt1, tol, g, pre_allo)
     # @show dt1
     @. htmp  = h  + dt1*rhs_1[1]
@@ -590,6 +490,7 @@ for i = 1:MAXIT
     @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
     lambda = maximum(u)
     dt2 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J[1]/(ts_ft*lambda), dT);
+    # dt2 = dT
     while dt2<dt1
         dt1 = dt2
         @. htmp  = h  + dt1*rhs_1[1]
@@ -633,11 +534,11 @@ for i = 1:MAXIT
     i +=1
     if t>= t_plot[pl_idx] #|| i==Nsteps
         # @show t
-            # filename = string("db_l_e_H_h",string(N),"_",string(K1D),"_",pl_idx,".csv");
+            # filename = string("db_l_n_H_h",string(N),"_",string(K1D),"_",pl_idx,".csv");
             # writedlm( filename,  h, ',');
-            # filename = string("db_l_e_H_hu",string(N),"_",string(K1D),"_",pl_idx,".csv");
+            # filename = string("db_l_n_H_hu",string(N),"_",string(K1D),"_",pl_idx,".csv");
             # writedlm( filename,  hu, ',');
-            # filename = string("db_l_e_H_hv",string(N),"_",string(K1D),"_",pl_idx,".csv");
+            # filename = string("db_l_n_H_hv",string(N),"_",string(K1D),"_",pl_idx,".csv");
             # writedlm( filename,  hv, ',');
             # println("save at iteration",i);
             pl_idx+=1;
@@ -652,12 +553,11 @@ end
 # end; if allocate > 0 println(allocate) end
 
 DT = DT[1:findmin(DT)[2]-1];
-
 if plot_last
     gr(aspect_ratio=1,legend=false,
     markerstrokewidth=0,markersize=2)
-    #
-    # # plotting nodes"
+
+    # "plotting nodes"
     @unpack rp,sp, Vp = rd
     vv = Vp*Pq*h
 
@@ -706,7 +606,7 @@ end
 if plot_all
     for idx in Integer.(LinRange(5, 17,4))
     # idx = 2
-    tag = "l_e_H";
+    tag = "l_n_H";
     filename = string("db_", tag, "_h3_", string(K1D), "_", string(idx), ".csv");
     h  = readdlm(filename, ',', Float64);
     fig1 = Makie.Figure();
@@ -758,3 +658,4 @@ if plot_all
     save(filename, fig2, px_per_unit = 2)
     end
 end
+
