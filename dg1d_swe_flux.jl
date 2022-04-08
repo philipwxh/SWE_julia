@@ -124,8 +124,8 @@ end
 
 function make_meshfree_ops(r,w)
     # p = 1
-    EL = [vandermonde( Line(), 1,[-1])/vandermonde( Line(), 1,r[1:2]) zeros(1,N-1)]
-    ER = [zeros(1,N-1) vandermonde( Line(), 1,[1])/vandermonde( Line(), 1,r[end-1:end])]
+    EL = [vandermonde( StartUpDG.Line(), 1,[-1])/vandermonde( StartUpDG.Line(), 1,r[1:2]) zeros(1,N-1)]
+    ER = [zeros(1,N-1) vandermonde( StartUpDG.Line(), 1,[1])/vandermonde( StartUpDG.Line(), 1,r[end-1:end])]
     E  = [EL;ER]
 
     # # using p=2 extrapolation

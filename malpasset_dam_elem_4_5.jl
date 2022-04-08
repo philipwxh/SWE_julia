@@ -62,10 +62,10 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
     @batch for i in mapB
         vu_dot_n = huf[i]*nx[i] + hvf[i]*ny[i];
         vu_dot_n = vu_dot_n;
-        huP[i] = huf[i] - 2*vu_dot_n*nx[i];
-        hvP[i] = hvf[i] - 2*vu_dot_n*ny[i];
-        # huP[i] =  -huf[i];
-        # hvP[i] =  -hvf[i];
+        # huP[i] = huf[i] - 2*vu_dot_n*nx[i];
+        # hvP[i] = hvf[i] - 2*vu_dot_n*ny[i];
+        huP[i] =  -huf[i];
+        hvP[i] =  -hvf[i];
     end
 
     @batch for e = 1:nelem
@@ -134,6 +134,16 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
     # axpy!(a, X, Y) Overwrite Y with X*a + Y, where a is a scalar. Return Y.
     lmul!(dt, Mrhs1_ID)
     @. h_L_next = h - Mrhs1_ID;
+    while  minimum(h_L_next) < tol
+        dt = dt/2;
+        lmul!(dt, Mrhs1_ID)
+        @. h_L_next = h - Mrhs1_ID;
+        # @show minimum(h_L_next), dt
+        if dt < tol
+            @show minimum(h_L_next), dt
+            error("dt is too small")
+        end
+    end
 
     @. rhs1_ES = rhs1_ES + f1_ES;
     # mul!(Mrhs1_ES, M_inv, rhs1_ES);
@@ -160,6 +170,7 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
         rxJ_i = rxJ[1,e]; sxJ_i = sxJ[1,e];
         ryJ_i = ryJ[1,e]; syJ_i = syJ[1,e];
         vgeo_e = (rxJ_i, sxJ_i, ryJ_i, syJ_i);
+        l_e = 1.0;
         ## fix here, allocation
         # b_e = btm[:,e];
         # h_e_min = minimum(h_H_next[:,e]);
@@ -176,9 +187,9 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
                 cij = C[i,j,e]
                 fv1_i_ID = 0.0; fv2_i_ID = 0.0; fv3_i_ID = 0.0;
                 fv1_j_ID = 0.0; fv2_j_ID = 0.0; fv3_j_ID = 0.0;
-                # if h_e_min<tol
+                if h_e_min<tol
                 # if true
-                if false
+                # if false
                     if cij!=0 || i == j
                         fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, ops, vgeo_e, i, j, view(btm, :,e), g);
                         fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, ops, vgeo_e, j, i, view(btm, :,e), g);
@@ -232,19 +243,75 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
                     #     error("limiting in force")
                     # end
                 else
-                    l = 1;
+                    l = 1.0;
                 end
-                l = 1.0;
-                # l = 0.0;
-                rhs1_CL[i,e] += fv1_i_ID + l * (fv1_i_ES-fv1_i_ID);
-                rhs2_CL[i,e] += fv2_i_ID + l * (fv2_i_ES-fv2_i_ID);
-                rhs3_CL[i,e] += fv3_i_ID + l * (fv3_i_ES-fv3_i_ID);
-                if i!= j
-                    rhs1_CL[j,e] += fv1_j_ID + l * (fv1_j_ES-fv1_j_ID);
-                    rhs2_CL[j,e] += fv2_j_ID + l * (fv2_j_ES-fv2_j_ID);
-                    rhs3_CL[j,e] += fv3_j_ID + l * (fv3_j_ES-fv3_j_ID);
+
+                l_e = min(l,l_e)
+                # l_e = 0
+                if l_e < tol
+                    l_e = 0.0;
+                    break
                 end
             end
+            if l_e < tol
+                l_e = 0.0;
+                break
+            end
+        end
+        for i=1:Nq
+            UL_E = (h[i,e], hu[i,e], hv[i,e]);
+            for j=i:Nq
+                UR_E = (h[j,e], hu[j,e], hv[j,e])
+                fv1_i_ES, fv2_i_ES, fv3_i_ES, fv1_j_ES, fv2_j_ES, fv3_j_ES = swe_2d_esdg_vol(UL_E, UR_E, ops, vgeo_e, i, j, view(btm, :,e), g)
+
+                cij = C[i,j,e]
+                fv1_i_ID = 0.0; fv2_i_ID = 0.0; fv3_i_ID = 0.0;
+                fv1_j_ID = 0.0; fv2_j_ID = 0.0; fv3_j_ID = 0.0;
+                if h_e_min<tol
+                # if true
+                    if cij!=0 || i == j
+                        fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, ops, vgeo_e, i, j, view(btm, :,e), g);
+                        fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, ops, vgeo_e, j, i, view(btm, :,e), g);
+
+                        # fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, Qr_ID, Qs_ID, vgeo_e, i, j);
+                        # fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, Qr_ID, Qs_ID, vgeo_e, j, i);
+                        lambda_i = abs(u[i,e]*C_x[i,j,e]+v[i,e]*C_y[i,j,e])+sqrt(g*h[i,e])
+                        lambda_j = abs(u[j,e]*C_x[j,i,e]+v[j,e]*C_y[j,i,e])+sqrt(g*h[j,e])
+                        lambda = max(lambda_i, lambda_j)
+                        # d1 = 0; d2 = 0; d3 = 0
+                        # if h[i,e]>tol &&  h[i,e]>tol
+                        # d1 = cij * lambda * (h[j,e] + b_e[j]  - h[i,e] - b_e[i]);
+                        d1 = co_d * cij * lambda * (h[j,e] - h[i,e]);
+                        # if h[i,e]<=tol ||  h[j,e]<=tol
+                        #     d1 = 0;
+                        # end
+                        # d1 = 0;
+                        d2 = co_d * cij * lambda * (hu[j,e] - hu[i,e]);
+                        d3 = co_d * cij * lambda * (hv[j,e] - hv[i,e]);
+                        # end
+                        fv1_i_ID -= d1
+                        fv2_i_ID -= d2
+                        fv3_i_ID -= d3
+                        fv1_j_ID += d1
+                        fv2_j_ID += d2
+                        fv3_j_ID += d3
+                    end
+                end
+                # l_e = 1.0;
+                # l_e = 0.0;
+                rhs1_CL[i,e] += fv1_i_ID + l_e * (fv1_i_ES-fv1_i_ID);
+                rhs2_CL[i,e] += fv2_i_ID + l_e * (fv2_i_ES-fv2_i_ID);
+                rhs3_CL[i,e] += fv3_i_ID + l_e * (fv3_i_ES-fv3_i_ID);
+                if i!= j
+                    rhs1_CL[j,e] += fv1_j_ID + l_e * (fv1_j_ES-fv1_j_ID);
+                    rhs2_CL[j,e] += fv2_j_ID + l_e * (fv2_j_ES-fv2_j_ID);
+                    rhs3_CL[j,e] += fv3_j_ID + l_e * (fv3_j_ES-fv3_j_ID);
+                end
+            end
+            v_l2 = sqrt( (hu[i,e]/h[i,e])^2 + (hv[i,e]/h[i,e])^2 );
+            h_modified = max(h[i,e]^gm_bf, 2*g*n_mr^2*dt*v_l2);
+            rhs2_CL[i,e] += (2*g*n_mr^2*hu[i,e]*v_l2*M[i,i])*J_e/(h[i,e]^gm_bf+h_modified)
+            rhs3_CL[i,e] += (2*g*n_mr^2*hv[i,e]*v_l2*M[i,i])*J_e/(h[i,e]^gm_bf+h_modified)
         end
     end
     # @show maximum(abs.(rhs2_CL)), maximum(abs.(rhs3_CL))
@@ -261,7 +328,7 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
         end
     end
     # @show maximum(abs.(rhs2_CL)), maximum(abs.(rhs3_CL))
-    return rhs1_CL, rhs2_CL, rhs3_CL
+    return rhs1_CL, rhs2_CL, rhs3_CL, dt
 end
 
 DT = zeros(MAXIT)
@@ -272,7 +339,7 @@ global i;
 @time begin
 for i = 1:MAXIT
     # if i%1000 == 0
-    if i%100 == 0
+    if i%1 == 0
         @show maximum(h), maximum(abs.(u)), maximum(abs.(v))
         @show i, t
     end
@@ -286,59 +353,26 @@ for i = 1:MAXIT
     @. u = hu/h; @. v = hv/h;
     @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
     lambda = maximum(u)
-    dt1 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J_min/(ts_ft*lambda), dT);
-    # dt1 = dT
-    rhs_1 = swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt1, tol, g, pre_allo)
-    # @show lambda, dt1
-    
-    @. htmp  = h  + dt1*rhs_1[1]
-    @. hutmp = hu + dt1*rhs_1[2]
-    @. hvtmp = hv + dt1*rhs_1[3]
-    h_max = maximum(htmp)
-    # utmp = (htmp, hutmp)
-    zero_vel!(htmp, hutmp, hvtmp, tol, hh_max);
-    # vel_reg!(htmp, hutmp, hvtmp, 55, tol);
-    # view(hutmp, findall(x->x<2*tol, htmp)) .= 0
 
+    dt = min(min(T,t_plot[pl_idx])-t, minimum(wq) * J_min / (ts_ft * lambda), dT);
+    rhs_1 = swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
+    dt = rhs_1[4]
+    @. htmp = h + dt*(rhs_1[1])
     h_min, pos = findmin(htmp)
-    if h_min <= 0
-       # @show L1
-       error("htmp_min<0 ", h_min, pos, "iteration ", i )
+
+    while h_min < tol/2
+        dt = dt/2
+        # @show dt, i
+        @. htmp = h + dt*(rhs_1[1])
+        h_min, pos = findmin(htmp)
+        if dt < tol
+            @show dt, i
+            error("dt too small")
+        end
     end
-    @. u = hutmp/htmp; @. v = hvtmp/htmp;
-    # @show maximum(abs.(u)), maximum(abs.(v))
-    @. u = sqrt((u)^2+(v)^2)+sqrt(g*htmp)
-    lambda = maximum(u)
-    # @show lambda, dt1
-    dt2 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J_min/(ts_ft*lambda), dT);
-    # dt2 = dT
-    # @show dt1, dt2
-    while dt2<dt1
-        # dt1 = dt1/2
-        dt1 = dt2
-        @. htmp  = h  + dt1*rhs_1[1]
-        @. hutmp = hu + dt1*rhs_1[2]
-        @. hvtmp = hv + dt1*rhs_1[3]
-        # utmp = (htmp, hutmp)
-        zero_vel!(htmp, hutmp, hvtmp, tol, hh_max);
-        # vel_reg!(htmp, hutmp, hvtmp, 55, tol);
-        @. u = hutmp/htmp; @. v = hv/htmp;
-        @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
-        lambda = maximum(u)
-        dt2 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J_min/(ts_ft*lambda), dT);
-        # @show dt2
-    end
-    # @show dt1, dt2
-    # zero_vel!(htmp, hutmp, hvtmp, tol);
-    utmp = (htmp, hutmp, hvtmp, btm_q)
-    dt = min(dt1, dt2)
-    rhs_2 = swe_2d_rhs(utmp,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
-    # dt = min(dt1, dt2)
-    # @show i, dt, t
-    # s1 = sum(h)+sum(hu)+sum(hv)
-    @. h  += .5*dt*(rhs_1[1] + rhs_2[1])
-    @. hu += .5*dt*(rhs_1[2] + rhs_2[2])
-    @. hv += .5*dt*(rhs_1[3] + rhs_2[3])
+    @. h  += dt*(rhs_1[1])
+    @. hu += dt*(rhs_1[2])
+    @. hv += dt*(rhs_1[3])
     zero_vel!(h, hu, hv, tol, hh_max);
 
     # vel_reg!(htmp, hutmp, hvtmp, 55, tol);
@@ -393,7 +427,7 @@ if plot_last
     ax2 = Makie.Axis3(fig2[1,1], aspect = (1, 1, 1),
                     elevation = .25*pi, azimuth = -.25*pi,
                     show_axis=false, resolution = (2500, 2500));
-    plot_data = Vp*Pq*(h)
+    plot_data = Vp*Pq*(sqrt.((hu./h).^2 + (hv./h).^2))
 
     plt1 = Makie.mesh!(ax1, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y), set_z_coordinate_to_zero=true),
             color=vec(plot_data),
@@ -423,12 +457,13 @@ if plot_last
     # Makie.hidedecorations!(ax1)
     # save("h1.0_mf_90.png", fig, px_per_unit = 2)
     Makie.tightlimits!(ax1)
-    # Makie.Colorbar(fig1[1,2], plt1)
+    Makie.Colorbar(fig1[1,2], plt1)
     # trim!(fig.layout);
     rowsize!(fig1.layout, 1, ax1.scene.px_area[].widths[2]);
     # rowsize!(fig.layout[1,3], 1, ax1.scene.px_area[].widths[2]*1.2)
     # rowsize!(fig.layout, 1, Aspect(3, 1))
     fig1
+
 
     plt2 = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
         color=vec(plot_data),

@@ -8,30 +8,58 @@ using StartUpDG
 using DelimitedFiles
 using BenchmarkTools
 using Polyester
+using ScatteredInterpolation
+# using Interpolations
 include("dg2d_swe_flux.jl")
+include("dg1d_swe_flux.jl")
 include("dg2d_swe_mesh_opt.jl")
 include("plot_Makie.jl")
 
-g = 1.0
+g = 1
 "Approximation parameters"
 N   = 3 # The order of approximation
-K1D = 8
+K1D = 2
+K2D = 2
 CFL = 1/4
-T   = 0.1 # endtime
-MAXIT = 100#0000
-@show K1D, MAXIT
-ts_ft= 1/2
-tol = 1e-2
-t_plot = LinRange(0, 1,21);
-plot_all = false
-plot_last = false
-# t_plot = [T];
-qnode_choice = "GQ" #"GQ" "GL" "tri_diage"
+T   = 0.5 # endtime
+MAXIT = 1000000
+tol = 1e-16
+t_plot = [T]
+ts_ft = 2
 
-# Mesh related variables
-rd = RefElemData(Tri(), SBP{Kubatko{LegendreFaceNodes}}(), N)
-VXY, EToV = uniform_mesh(Tri(), Integer(K1D*1.5),K1D)
-VXY[1] .= VXY[1]*1.5.+0.5
+
+rd_1D = RefElemData(StartUpDG.Line(), SBP(), N)
+VXY_1D, EToV_1D = uniform_mesh(StartUpDG.Line(), K1D)
+md_1D = MeshData(VXY_1D, EToV_1D, rd_1D)
+
+"Mesh related variables"
+VX_1D = md_1D.VX
+EToV_1D = md_1D.EToV
+
+# "Construct matrices on reference elements"
+@unpack r, wq, wf, VDM, Dr, Vf = rd_1D
+r_1D = r; wq_1D = wq; wf_1D  = wf; VDM_1D = VDM; Dr_1D = Dr; Vf_1D = Vf;
+
+M_1D = inv(VDM_1D*VDM_1D')
+
+Q_ID_1D,E_1D,B_1D,ψ_1D = make_meshfree_ops(r, wq)
+E_1D = zeros(size(E_1D)); E_1D[1,1] = 1; E_1D[end,end]=1;
+Q_IDskew_1D = .5*(Q_ID_1D-transpose(Q_ID_1D))
+Q_ES_1D = M_1D*Dr_1D
+Q_ESskew_1D = .5*(Q_ES_1D-transpose(Q_ES_1D))
+
+# "Connectivity maps"
+md_1D = make_periodic(md_1D)
+@unpack J, nxJ, rxJ, x, xf, mapM, mapP = md_1D
+J_1D = J;  nxJ_1D = nxJ; rxJ_1D = rxJ; x_1D = x; xf_1D = xf; mapM_1D = mapM; mapP_1D = mapP;
+# rxJ_1D = 1
+
+M_inv_1D = diagm(1 ./(wq_1D.*J_1D[1]))
+Mf_inv_1D = E_1D*M_inv_1D*E_1D'
+
+# 2D Mesh related variables
+rd = RefElemData(Tri(), SBP{Kubatko{LobattoFaceNodes}}(), N-1)
+VXY, EToV = uniform_mesh(Tri(),K2D,K2D)
 md = MeshData(VXY, EToV, rd)
 
 # # Construct matrices on reference elements
@@ -60,37 +88,39 @@ Qs_ID = Matrix(droptol!(sparse(Qs_ID),1e-15))
 Qrskew_ID = .5*(Qr_ID-transpose(Qr_ID))
 Qsskew_ID = .5*(Qs_ID-transpose(Qs_ID))
 
-# # "Construct global coordinates"
-# V1 = Matrix(droptol!(sparse(V1),1e-15))
-# x = V1*VX[transpose(EToV)]*1.5.+0.5
-# y = V1*VY[transpose(EToV)]
+map_2D_1D = zeros(Int64, size(md.mapM))
+map_1D_2D_low = zeros(Int64, size(x_1D))
+map_1D_2D_high = zeros(Int64, size(x_1D))
 
-# # "Connectivity maps"
-# xf,yf = (x->Vf*x).((x,y))
-# mapM,mapP,mapB = build_node_maps((xf,yf),FToF)
-# mapM = reshape(mapM,length(wf),K)
-# global mapP = reshape(mapP,length(wf),K)
-@unpack x, y, xf, yf, mapP, mapM, mapB = md
-
-BDx = ones(size(xf));BDy = ones(size(yf));DAMx = ones(size(yf));
-for i=1:size(xf,1)
-    for j = 1:size(xf,2)
-        if (abs(xf[i,j]-maximum(xf))< 1e-10 )|| (abs(xf[i,j]-minimum(xf)) < 1e-10)
-            BDx[i,j] = -1;
-        end
-        if (abs(yf[i,j]-maximum(yf))< 1e-10 )|| (abs(yf[i,j]-minimum(yf)) < 1e-10)
-            BDy[i,j] = -1;
-        end
-        if (abs(xf[i,j]-0)< 1e-10 ) && (abs(yf[i,j]) > 0.1)
-            DAMx[i,j] = -1;
-            mapP[i,j] = mapM[i,j];
-        end
+cnt_low = -1;  cnt_high = 1;
+for i = 1:maximum(md.mapM)
+    global cnt_low, cnt_high
+    if md.mapM[i] <= maximum(md.mapM)/2 && md.mapP[i] > maximum(md.mapM)/2
+        md.mapP[i] = -1
+        map_1D_2D_low[-cnt_low] = i
+        map_2D_1D[i] = cnt_low;
+        cnt_low = cnt_low-1;
+    end
+    if md.mapM[i] > maximum(md.mapM)/2 && md.mapP[i] <= maximum(md.mapM)/2
+        md.mapP[i] = -1
+        map_1D_2D_high[cnt_high] = i
+        map_2D_1D[i] = cnt_high;
+        cnt_high = cnt_high+1;
     end
 end
+md = make_periodic(md, (true, false))
+@unpack x, y, xf, yf, mapP, mapM, mapB = md
 
 # # "Geometric factors and surface normals"
 @unpack rxJ, sxJ, ryJ, syJ, J, sJ, nxJ, nyJ = md
+# rxJ, sxJ, ryJ, syJ, J = geometric_factors(x, y, Dr, Ds)
+# rxJ = Matrix(droptol!(sparse(rxJ),1e-14)); sxJ = Matrix(droptol!(sparse(sxJ),1e-14))
+# ryJ = Matrix(droptol!(sparse(ryJ),1e-14)); syJ = Matrix(droptol!(sparse(syJ),1e-14))
+# nxJ = (Vf*rxJ).*nrJ + (Vf*sxJ).*nsJ;
+# nyJ = (Vf*ryJ).*nrJ + (Vf*syJ).*nsJ;
+# sJ = @. sqrt(nxJ^2 + nyJ^2)
 nx = nxJ./sJ; ny = nyJ./sJ;
+# rxJ,sxJ,ryJ,syJ,J = (x->Vq*x).((rxJ,sxJ,ryJ,syJ,J))
 
 
 QNr = [Qr_ES - .5*E_ES'*Br*E_ES .5*E_ES'*Br;
@@ -98,9 +128,12 @@ QNr = [Qr_ES - .5*E_ES'*Br*E_ES .5*E_ES'*Br;
 QNs = [Qs_ES - .5*E_ES'*Bs*E_ES .5*E_ES'*Bs;
     -.5*Bs*E_ES .5*Bs];
 
+# VN_sbp = [eye(length(wq));E];
 VN_sbp = [Matrix{Float64}(I, length(wq), length(wq)); E]
 QNr_sbp = VN_sbp'*QNr*VN_sbp;
+# # @show norm(QNr_sbp+QNr_sbp' - E'*diagm(wf.*nrJ)*E)
 QNs_sbp = VN_sbp'*QNs*VN_sbp;
+# # @show norm(QNs_sbp+QNs_sbp' - E'*diagm(wf.*nsJ)*E)
 
 Qrskew_ES = .5*(QNr_sbp-QNr_sbp');
 Qsskew_ES = .5*(QNs_sbp-QNs_sbp');
@@ -109,7 +142,7 @@ M_inv = diagm(@. 1/(wq*J[1][1]))
 M_inv_neg = -M_inv;
 Mf_inv = E*M_inv*E';
 Pf = transpose(E)*diagm(wf)
-Cf = abs.(rxJ[1,1]*diag(Qr_ID)[1:length(wf)] + ryJ[1,1]*diag(Qr_ID)[1:length(wf)] + syJ[1,1]*diag(Qs_ID)[1:length(wf)])
+# Cf = abs.(rxJ[1,1]*diag(Qr_ID)[1:length(wf)] + ryJ[1,1]*diag(Qr_ID)[1:length(wf)] + syJ[1,1]*diag(Qs_ID)[1:length(wf)])
 
 cij_x =  rxJ[1,1]*Qr_ID + sxJ[1,1]*Qs_ID
 cij_y =  ryJ[1,1]*Qr_ID + syJ[1,1]*Qs_ID
@@ -120,30 +153,17 @@ replace!(C_x, NaN=>0); replace!(C_y, NaN=>0);
 "Time integration"
 rk4a,rk4b,rk4c = ck45()
 CN = (N+1)*(N+2)/2  # estimated trace constant
-dT = CFL * 2 / (CN*K1D)
+dT = CFL * 2 / (CN*K2D)
 Nsteps = convert(Int,ceil(T/dT))
 dt = T/Nsteps
 
+btm_2D = 0.05*abs(y)+5;
+h = x*0.0 .+0.1
+hu = h*0;
+hv = h*0
+h_1D = 1.0 .+ x_1D*0;
+hu_1D = h_1D;
 
-# "initial conditions"
-xq = Vq*x
-yq = Vq*y
-# btm = sin.(pi*xq) .+1;
-btm = @. 5*exp(-25*(xq^2+yq^2))
-btm = btm*0.0;
-
-h = 5.0*ones(Float64,size(xq))
-for i = 1:size(xq,2)
-    if maximum(xq[:,i])>1/K1D^2
-        h[:,i] .= tol;
-    end
-end
-h0 = copy(h)
-
-hu = h*0.0;
-hv = h*0.0;
-
-"pack arguments into tuples"
 Fmask = [findfirst(@. abs(rf[i] - rq) + abs(sf[i] - sq) < 100*eps()) for i in eachindex(rf)]
 Nq = size(h,1); Nfq = size(E,1);nelem = size(h,2);
 ops = ( Qrskew_ID,Qsskew_ID, Qr_ID, Qs_ID,
@@ -155,6 +175,8 @@ fgeo = (nxJ,nyJ,sJ, nx, ny)
 nodemaps = (mapP,mapB, BDx, BDy, DAMx)
 (gQNxb, gQNyb) =  ESDG_bottom(QNr_sbp, QNs_sbp, btm, vgeo, g);
 U = (h, hu, hv, btm, gQNxb, gQNyb)
+
+
 
 rhs1_ID = zeros(Float64, size(h)); Mrhs1_ID = zeros(Float64, size(h));
 rhs1_ES = zeros(Float64, size(h)); Mrhs1_ES = zeros(Float64, size(h));
@@ -355,12 +377,13 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
 
     #volume part
     # loop over all elements
-    @batch for e = 1:nelem
+    @batch for e = 1:size(h,2)
         rxJ_i = rxJ[1,e]; sxJ_i = sxJ[1,e];
         ryJ_i = ryJ[1,e]; syJ_i = syJ[1,e];
         vgeo_e = (rxJ_i, sxJ_i, ryJ_i, syJ_i);
         b_e = btm[:,e];
         h_e_min = minimum(h_H_next[:,e]);
+        l_e = 1.0;
         for i=1:Nq
             UL_E = (h[i,e], hu[i,e], hv[i,e]);
             for j=i:Nq
@@ -424,15 +447,64 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
                     #     error("limiting in force")
                     # end
                 else
-                    l = 1;
+                    l = 1.0;
                 end
-                rhs1_CL[i,e] += fv1_i_ID + l * (fv1_i_ES-fv1_i_ID);
-                rhs2_CL[i,e] += fv2_i_ID + l * (fv2_i_ES-fv2_i_ID);
-                rhs3_CL[i,e] += fv3_i_ID + l * (fv3_i_ES-fv3_i_ID);
+                l_e = min(l,l_e)
+                # l_e = 0
+                if l_e < tol
+                    l_e = 0.0;
+                    break
+                end
+            end
+            if l_e < tol
+                l_e = 0.0;
+                break
+            end
+        end
+        for i=1:Nq
+            UL_E = (h[i,e], hu[i,e], hv[i,e]);
+            for j=i:Nq
+                UR_E = (h[j,e], hu[j,e], hv[j,e])
+                fv1_i_ES, fv2_i_ES, fv3_i_ES, fv1_j_ES, fv2_j_ES, fv3_j_ES = swe_2d_esdg_vol(UL_E, UR_E, ops, vgeo_e, i, j, b_e, g)
+
+                cij = C[i,j]
+                fv1_i_ID = 0.0; fv2_i_ID = 0.0; fv3_i_ID = 0.0;
+                fv1_j_ID = 0.0; fv2_j_ID = 0.0; fv3_j_ID = 0.0;
+                if C[i,j]!=0 || i == j
+                    fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, ops, vgeo_e, i, j, btm, g);
+                    fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, ops, vgeo_e, j, i, btm, g);
+
+                    # fv1_i_ID, fv2_i_ID, fv3_i_ID = swe_2d_ID_vol(UR_E, Qr_ID, Qs_ID, vgeo_e, i, j);
+                    # fv1_j_ID, fv2_j_ID, fv3_j_ID = swe_2d_ID_vol(UL_E, Qr_ID, Qs_ID, vgeo_e, j, i);
+                    lambda_i = abs(u[i,e]*C_x[i,j]+v[i,e]*C_y[i,j])+sqrt(g*h[i,e])
+                    lambda_j = abs(u[j,e]*C_x[j,i]+v[j,e]*C_y[j,i])+sqrt(g*h[j,e])
+                    lambda = max(lambda_i, lambda_j)
+                    # d1 = 0; d2 = 0; d3 = 0
+                    # if h[i,e]>tol &&  h[i,e]>tol
+                    # d1 = cij * lambda * (h[j,e] + b_e[j]  - h[i,e] - b_e[i]);
+                    d1 = cij * lambda * (h[j,e] - h[i,e]);
+                    # if h[i,e]<=tol ||  h[j,e]<=tol
+                    #     d1 = 0;
+                    # end
+                    # d1 = 0;
+                    d2 = cij * lambda * (hu[j,e] - hu[i,e]);
+                    d3 = cij * lambda * (hv[j,e] - hv[i,e]);
+                    # end
+                    fv1_i_ID -= d1
+                    fv2_i_ID -= d2
+                    fv3_i_ID -= d3
+                    fv1_j_ID += d1
+                    fv2_j_ID += d2
+                    fv3_j_ID += d3
+                end
+
+                rhs1_CL[i,e] += fv1_i_ID + l_e * (fv1_i_ES-fv1_i_ID);
+                rhs2_CL[i,e] += fv2_i_ID + l_e * (fv2_i_ES-fv2_i_ID);
+                rhs3_CL[i,e] += fv3_i_ID + l_e * (fv3_i_ES-fv3_i_ID);
                 if i!= j
-                    rhs1_CL[j,e] += fv1_j_ID + l * (fv1_j_ES-fv1_j_ID);
-                    rhs2_CL[j,e] += fv2_j_ID + l * (fv2_j_ES-fv2_j_ID);
-                    rhs3_CL[j,e] += fv3_j_ID + l * (fv3_j_ES-fv3_j_ID);
+                    rhs1_CL[j,e] += fv1_j_ID + l_e * (fv1_j_ES-fv1_j_ID);
+                    rhs2_CL[j,e] += fv2_j_ID + l_e * (fv2_j_ES-fv2_j_ID);
+                    rhs3_CL[j,e] += fv3_j_ID + l_e * (fv3_j_ES-fv3_j_ID);
                 end
             end
         end
@@ -447,215 +519,6 @@ function swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt, tol, g, pre_allo)
     return rhs1_CL, rhs2_CL, rhs3_CL
 end
 
-DT = zeros(MAXIT)
-t = 0
-pl_idx = 1;
-global i;
-# filename = string("h",string(N),"_",string(K1D),"_","0_dam_break.csv");
-# writedlm( filename,  h, ',');
-# allocate = @allocated begin
-@time begin
-for i = 1:MAXIT
-    if i%1000 == 0
-        @show i, t
-    end
-    # @show i
-    global h, hu, hv, U, t, t_plot, pl_idx, dt, dt1, dt2, lambda, filename
-    global U,t, t_plot, pl_idx, dt, filename, htmp, hutmp, hvtmp, rhs_1, rhs_2
-    # Heun's method - this is an example of a 2nd order SSP RK method
-    # local rhs_ES1, rhs_ID1 = swe_2d_rhs(u,ops,dis_cst,vgeo,fgeo,nodemaps, dt1)
-    # lambda = maximum(sqrt.((hu./h).^2+(hv./h).^2)+sqrt.(g.*h))
-    @. u = hu/h; @. v = hv/h;
-    @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
-    lambda = maximum(u)
-    dt1 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J[1]/(ts_ft*lambda), dT);
-    # dt1 = dT
-    rhs_1 = swe_2d_rhs(U,ops,dis_cst,vgeo,fgeo,nodemaps, dt1, tol, g, pre_allo)
-    # @show dt1
-    @. htmp  = h  + dt1*rhs_1[1]
-    @. hutmp = hu + dt1*rhs_1[2]
-    @. hvtmp = hv + dt1*rhs_1[3]
 
-    # utmp = (htmp, hutmp)
-    zero_vel!(htmp, hutmp, hvtmp, tol);
-    # view(hutmp, findall(x->x<2*tol, htmp)) .= 0
-    # @show L1, htmp dt1
 
-    h_min, pos = findmin(htmp)
-    if h_min <= 0
-       # @show L1
-       error("htmp_min<0 ", h_min, pos, "iteration ", i )
-    end
-    @. u = hutmp/htmp; @. v = hv/htmp;
-    @. u = sqrt((u)^2+(v)^2)+sqrt(g*h)
-    lambda = maximum(u)
-    dt2 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J[1]/(ts_ft*lambda), dT);
-    # dt2 = dT
-    while dt2<dt1
-        dt1 = dt2
-        @. htmp  = h  + dt1*rhs_1[1]
-        @. hutmp = hu + dt1*rhs_1[2]
-        @. hvtmp = hv + dt1*rhs_1[3]
-        @. u = hutmp/htmp; @. v = hv/htmp;
-        @. u = u = sqrt((u)^2+(v)^2)+sqrt(g*h)
-        lambda = maximum(u)
-        dt2 = min(min(T,t_plot[pl_idx])-t, minimum(wq)*J[1]/(ts_ft*lambda), dT);
-        # @show dt2
-    end
-    # @show dt2
-    utmp = (htmp, hutmp, hvtmp, btm, gQNxb, gQNyb)
-    rhs_2 = swe_2d_rhs(utmp,ops,dis_cst,vgeo,fgeo,nodemaps, dt2, tol, g, pre_allo)
-    dt = min(dt1, dt2)
-
-    # s1 = sum(h)+sum(hu)+sum(hv)
-    @. h  += .5*dt*(rhs_1[1] + rhs_2[1])
-    @. hu += .5*dt*(rhs_1[2] + rhs_2[2])
-    @. hv += .5*dt*(rhs_1[3] + rhs_2[3])
-    zero_vel!(h, hu, hv, tol);
-    # @show L2, h, dt
-    h_min, pos = findmin(h)
-    # s2 = sum(h)+sum(hu)+sum(hv)
-    # @show norm(s2-s1)
-    # @show sum(rhs_1[1] + rhs_2[1])
-    # @show sum(rhs_1[2] + rhs_2[2])
-    # @show sum(rhs_1[3] + rhs_2[3])
-    # @show norm(rhs_1[1] + rhs_2[1])
-    # @show norm(rhs_1[2] + rhs_2[2])
-    # @show norm(rhs_1[3] + rhs_2[3])
-    if h_min <=0
-        # @show L2
-        @show maximum(hu./h)
-        error("h_min<0 ", h_min, pos, "iteration ", i )
-    end
-    U = (h,hu,hv, btm, gQNxb, gQNyb)
-    t += dt
-    # @show L1, L2
-    DT[i] = dt
-    i +=1
-    if t>= t_plot[pl_idx] #|| i==Nsteps
-        # @show t
-            # filename = string("db_l_n_H_h",string(N),"_",string(K1D),"_",pl_idx,".csv");
-            # writedlm( filename,  h, ',');
-            # filename = string("db_l_n_H_hu",string(N),"_",string(K1D),"_",pl_idx,".csv");
-            # writedlm( filename,  hu, ',');
-            # filename = string("db_l_n_H_hv",string(N),"_",string(K1D),"_",pl_idx,".csv");
-            # writedlm( filename,  hv, ',');
-            # println("save at iteration",i);
-            pl_idx+=1;
-        # t_plot += dT*10;
-        # println("Number of time steps $i out of $Nsteps")
-    end
-    if t>=T
-            break
-    end
-end
-end
-# end; if allocate > 0 println(allocate) end
-
-DT = DT[1:findmin(DT)[2]-1];
-if plot_last
-    gr(aspect_ratio=1,legend=false,
-    markerstrokewidth=0,markersize=2)
-
-    # "plotting nodes"
-    @unpack rp,sp, Vp = rd
-    vv = Vp*Pq*h
-
-    fig1 = Makie.Figure();
-    fig2 = Makie.Figure();
-    ax1 = Makie.Axis(fig1[1, 1],
-                    aspect = DataAspect(),
-                    show_axis=false, resolution = (2500,2500));
-    ax2 = Makie.Axis3(fig2[1,1], aspect = (1, 1, 1),
-                    elevation = .25*pi, azimuth = -.25*pi,
-                    show_axis=false, resolution = (2500, 2500));
-    plot_data = Vp*Pq*(h)
-
-    plt1 = Makie.mesh!(ax1, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y), set_z_coordinate_to_zero=true),
-            color=vec(plot_data),
-            # shading = false,
-            colormap =:blues,
-            # colormap =:viridis,
-            );
-    # plt = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
-    #         color=vec(plot_data), shading = false, colormap = :blues);
-    #
-    # ax = [ax1, ax2]
-    Makie.hidespines!(ax1)
-    Makie.hidedecorations!(ax1)
-    # save("h1.0_mf_90.png", fig, px_per_unit = 2)
-    Makie.tightlimits!(ax1)
-    Makie.Colorbar(fig1[1,2], plt1)
-    # trim!(fig.layout);
-    rowsize!(fig1.layout, 1, ax1.scene.px_area[].widths[2]);
-    # rowsize!(fig.layout[1,3], 1, ax1.scene.px_area[].widths[2]*1.2)
-    # rowsize!(fig.layout, 1, Aspect(3, 1))
-    fig1
-
-    plt2 = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
-        color=vec(plot_data),
-        # shading = false,
-        colormap = :blues
-        # colormap = :viridis
-        );
-    Makie.hidespines!(ax2)
-    Makie.hidedecorations!(ax2)
-    fig2
-end
-
-if plot_all
-    for idx in Integer.(LinRange(5, 17,4))
-    # idx = 2
-    tag = "l_n_H";
-    filename = string("db_", tag, "_h3_", string(K1D), "_", string(idx), ".csv");
-    h  = readdlm(filename, ',', Float64);
-    fig1 = Makie.Figure();
-    fig2 = Makie.Figure();
-    ax1 = Makie.Axis(fig1[1, 1],
-                    aspect = DataAspect(),
-                    show_axis=false, resolution = (2500,2500));
-    ax2 = Makie.Axis3(fig2[1,1], aspect = (1, 1, 1),
-                    elevation = .25*pi, azimuth = -.25*pi,
-                    show_axis=false, resolution = (2500, 2500));
-    plot_data = Vp*Pq*(h)
-
-    plt1 = Makie.mesh!(ax1, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y), set_z_coordinate_to_zero=true),
-            color=vec(plot_data),
-            # shading = false,
-            colormap =:blues,
-            # colormap =:viridis,
-            );
-    # plt = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
-    #         color=vec(plot_data), shading = false, colormap = :blues);
-    #
-    # ax = [ax1, ax2]
-    Makie.hidespines!(ax1)
-    Makie.hidedecorations!(ax1)
-    # save("h1.0_mf_90.png", fig, px_per_unit = 2)
-    Makie.tightlimits!(ax1)
-    Makie.Colorbar(fig1[1,2], plt1)
-    # trim!(fig.layout);
-    rowsize!(fig1.layout, 1, ax1.scene.px_area[].widths[2]);
-    # rowsize!(fig.layout[1,3], 1, ax1.scene.px_area[].widths[2]*1.2)
-    # rowsize!(fig.layout, 1, Aspect(3, 1))
-    # fig1
-
-    plt2 = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
-        color=vec(plot_data),
-        # shading = false,
-        colormap = :blues
-        # colormap = :viridis
-        );
-    Makie.hidespines!(ax2)
-    Makie.hidedecorations!(ax2)
-    # fig2
-
-    # filename = string("dam_break_low_alpha_h", string(idx*4+1),"_32_90.png");
-    filename = string("db_", tag, "_h_", string(K1D),"_", string(idx-1), "_90.png");
-    save(filename, fig1, px_per_unit = 2)
-    # # filename = string("dam_break_low_alpha_h", string(idx*4+1),"_32_45.png");
-    filename = string("db_", tag, "_h_", string(K1D),"_", string(idx-1), "_45.png");
-    save(filename, fig2, px_per_unit = 2)
-    end
-end
 
