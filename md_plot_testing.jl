@@ -1,14 +1,40 @@
 folder = "result_4_10_2/"
 # folder = ""
 # idx = 0
-T = 350
+T = 800
 @unpack rp, sp, Vp = rd;
-# for idx in LinRange(25, T, Integer(T/25))
-for idx in [400]
+# for idx in LinRange(100, T, Integer(T/100))
+for idx in [-400]
+    # folder = "result_4_10/"
     tag = string(folder, "malpasset_h");
     # tag = "malpasset_btm"
     filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
     h = readdlm(filename, ',', Float64);
+    tag = string(folder, "malpasset_hu");
+    # tag = "malpasset_btm"
+    filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
+    hu = readdlm(filename, ',', Float64);
+    tag = string(folder, "malpasset_hv");
+    # tag = "malpasset_btm"
+    filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
+    hv = readdlm(filename, ',', Float64);
+
+
+
+    # folder = "result_4_10_2/"
+    # tag = string(folder, "malpasset_h");
+    # # tag = "malpasset_btm"
+    # filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
+    # h = writedlm(filename, h, ',');
+    # tag = string(folder, "malpasset_hu");
+    # # tag = "malpasset_btm"
+    # filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
+    # hu = writedlm(filename, hu, ',');
+    # tag = string(folder, "malpasset_hv");
+    # # tag = "malpasset_btm"
+    # filename = string(tag, string(N),"_", string(Integer(round(idx))), ".csv");
+    # hv = writedlm(filename, hv, ',');
+    # continue;
     # h = h - h0
     fig1 = Makie.Figure();
     fig2 = Makie.Figure();
@@ -52,12 +78,19 @@ for idx in [400]
     #         colormap =:blues,
     #         # colormap =:viridis,
     #         );
-
+    xh = xq[findall(x->x>100, abs.(h))]; yh = yq[findall(x->x>100, abs.(h))];
+    xu = xq[findall(x->x>50, abs.(hu./h))]; yu = yq[findall(x->x>50, abs.(hu./h))];
+    xv = xq[findall(x->x>50, abs.(hv./h))]; yv = yq[findall(x->x>50, abs.(hv./h))];
+    plt1 = Makie.scatter!(ax1, xb, yb, color = :black, markersize = 2)
+    plt1 = Makie.scatter!(ax1, xh, yh, color = :yellow, markersize = 5)
+    plt1 = Makie.scatter!(ax1, xu, yu, color = :red, markersize = 5)
+    plt1 = Makie.scatter!(ax1, xv, yv, color = :green, markersize = 5)
     # xs = xf[sb_b_idx]; ys = yf[sb_b_idx]
+    # xs = xq[findall(x->x>10000, xq)]; ys = yq[findall(x->x>10000, xq)]
     # plt1 = Makie.scatter!(ax1, xs, ys, color = :yellow, markersize = 2)
     # plt = Makie.mesh!(ax2, build_plot_data(plot_data, (rp,sp), (Vp*x, Vp*y)),
     #         color=vec(plot_data), shading = false, colormap = :blues);
-    #
+    
     # ax = [ax1, ax2]
     Makie.hidespines!(ax1)
     Makie.hidedecorations!(ax1)
@@ -81,7 +114,7 @@ for idx in [400]
     # fig2
 
     # filename = string("dam_break_low_alpha_h", string(idx*4+1),"_32_90.png");
-    filename = string( tag,"_", string(Integer(round(idx))), "_btm_90.png");
+    filename = string( tag,"_", string(Integer(round(idx))), "++_btm_90.png");
     save(filename, fig1, px_per_unit = 2)
     # # filename = string("dam_break_low_alpha_h", string(idx*4+1),"_32_45.png");
     # filename = string(tag,"_", string(Integer(round(idx))),  "_45.png");

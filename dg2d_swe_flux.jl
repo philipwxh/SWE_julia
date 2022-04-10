@@ -206,8 +206,8 @@ function zero_vel!(h, hu, hv, tol, h0, ocean_idx, val = 0)::Tuple{Array{Float64,
         # end
     	# k = rand()
         for i = 1:m
-            if h[i,e] < 2*tol #&& h[i,e] > -tol*10
-                h[i,e] = 2*tol
+            if h[i,e] < tol #&& h[i,e] > -tol*10
+                h[i,e] = tol
             end
             if h[i,e]< 10*tol
                 # h[i,e] = tol;

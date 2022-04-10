@@ -1,12 +1,12 @@
 g = 9.8
 "Approximation parameters"
-N   = 1 # The order of approximation
+N   = 2 # The order of approximation
 CFL = 1/16
-T   = 1000 # endtime
+T   = 100#0 # endtime
 MAXIT = 1000000
 ts_ft = 4
 tol = 1e-4
-global n_mr = 0.03
+global n_mr = 0.04
 global gm_bf = 4/3
 t_plot = LinRange(100, T, Integer(T/100))
 # t_plot = [T]
@@ -98,6 +98,7 @@ dt = T/Nsteps
 xq = Vq*x
 yq = Vq*y
 btm_data = readdlm("malpasset_dam_bathymetry.txt", Float64, skipstart=1);
+ocean_idx = readdlm("malpasset_dam_ocean_idx.txt", Int64)[:,1];
 itp = interpolate(Multiquadratic(), btm_data[:,1:2]', btm_data[:,3]);
 itpNN = interpolate(NearestNeighbor(), btm_data[:,1:2]', btm_data[:,3]);
 B_idx = zeros(size(xf))
@@ -108,16 +109,17 @@ btm = evaluate(itpNN, [md.VX  md.VY]')
 inp_quad = (vandermonde(Tri(), 1, nodes(Tri(), N)...) / vandermonde(Tri(), 1, nodes(Tri(), 1)...));
 btm_q = rd.V1*btm[EToV']
 v_idx = findall(x->x<10000, xq);
-sb_b_idx = []
-for e = 1:size(btm_q,2)
-    if maximum(btm_q[:,e]) > 0 && minimum(btm_q[:,e]) < 0
-        # btm_q[:,e] .= max.(btm_q[:,e], 0);
+sb_idx = []
+for e in ocean_idx
+    if maximum(btm_q[:,e]) > 0 && minimum(btm_q[:,e]) < 0 
+        append!(sb_idx, e)
+        btm_q[:,e] .= min.(btm_q[:,e], -tol);
     end
     if maximum(btm_q[:,e]) < 0
-        append!(sb_b_idx, e)
+        # append!(sb_b_idx, e)
         # # append!(mapB, (e-1)*Nfq+1:e*Nfq)
-        # mapP[mapP[(e-1)*Nfq+1:e*Nfq]] .= mapM[mapP[(e-1)*Nfq+1:e*Nfq]]
-        # mapP[(e-1)*Nfq+1:e*Nfq].= (e-1)*Nfq+1:e*Nfq
+        mapP[mapP[(e-1)*Nfq+1:e*Nfq]] .= mapM[mapP[(e-1)*Nfq+1:e*Nfq]]
+        mapP[(e-1)*Nfq+1:e*Nfq].= (e-1)*Nfq+1:e*Nfq
     end
 end
 
@@ -134,8 +136,7 @@ bnd_x_idx = findall(x->abs( x .- 4500 ) < 200, xq);
 bnd_idx = bnd_x_idx[findall(x->x in bnd_y_idx, bnd_x_idx)]
 h[bnd_idx] .= tol;
 
-ocean_idx = findall(x->x<0, btm_q);
-h[ocean_idx] = tol .- btm_q[ocean_idx];
+h[:,ocean_idx] = tol .- btm_q[:,ocean_idx];
 
 # btm_q = btm_q*0;
 #test wb
